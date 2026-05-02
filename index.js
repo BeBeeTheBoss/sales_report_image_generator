@@ -271,6 +271,65 @@ app.post('/generate-report-image', async (req, res) => {
     }
 });
 
+// --- DELETE REPORT IMAGES API ---
+// Supports:
+// 1) Delete one file: POST /delete-report-images { "fileName": "report_xxx.png" }
+// 2) Delete all files: POST /delete-report-images { "all": true }
+app.post('/delete-report-images', async (req, res) => {
+    try {
+        const { fileName, all } = req.body || {};
+
+        if (all === true) {
+            const files = await fs.promises.readdir(uploadsDir);
+            const reportFiles = files.filter((name) => /^report_\d+\.png$/i.test(name) || /^sales_\d+\.png$/i.test(name));
+
+            await Promise.all(
+                reportFiles.map((name) =>
+                    fs.promises.unlink(path.join(uploadsDir, name)).catch(() => null)
+                )
+            );
+
+            return res.json({
+                status: 'success',
+                message: 'All report images deleted.',
+                deletedCount: reportFiles.length
+            });
+        }
+
+        if (!fileName || typeof fileName !== 'string') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Provide {"all": true} or a valid {"fileName": "...png"}'
+            });
+        }
+
+        const safeName = path.basename(fileName);
+        if (safeName !== fileName || !/\.png$/i.test(safeName)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid fileName.'
+            });
+        }
+
+        const targetPath = path.join(uploadsDir, safeName);
+        await fs.promises.unlink(targetPath);
+
+        res.json({
+            status: 'success',
+            message: 'Report image deleted.',
+            fileName: safeName
+        });
+    } catch (error) {
+        if (error && error.code === 'ENOENT') {
+            return res.status(404).json({
+                status: 'error',
+                message: 'File not found.'
+            });
+        }
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+});
+
 app.listen(PORT, HOST, () => {
     const localIp = getLocalIp();
     console.log(`Server running on http://localhost:${PORT}`);
