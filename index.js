@@ -42,6 +42,14 @@ app.get('/', (req, res) => {
             <div class="max-w-4xl mx-auto bg-white p-8 rounded-xl shadow-md">
                 <h1 class="text-2xl font-bold mb-4 text-slate-800">Sales Report Image Generator</h1>
                 <p class="text-slate-600 mb-6 text-sm">JSON data များကို အောက်တွင် ထည့်သွင်းပြီး Test လုပ်နိုင်ပါသည်။</p>
+                <div class="mb-4">
+                    <label for="reportMode" class="block text-sm font-medium text-slate-700 mb-2">Report Type</label>
+                    <select id="reportMode" class="w-full p-2 border rounded-lg">
+                        <option value="auto">Auto Detect</option>
+                        <option value="brand">Sales by Brand</option>
+                        <option value="category">Sales by Category</option>
+                    </select>
+                </div>
                 
                 <textarea id="jsonInput" class="w-full h-64 p-4 border rounded-lg font-mono text-xs mb-4" placeholder="Paste your JSON array here..."></textarea>
                 
@@ -61,6 +69,7 @@ app.get('/', (req, res) => {
                     const btn = document.getElementById('btn');
                     const resultDiv = document.getElementById('result');
                     const input = document.getElementById('jsonInput').value;
+                    const reportMode = document.getElementById('reportMode').value;
                     
                     try {
                         const jsonData = JSON.parse(input);
@@ -70,7 +79,10 @@ app.get('/', (req, res) => {
                         const response = await fetch('/generate-report-image', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(jsonData)
+                            body: JSON.stringify({
+                                reportMode,
+                                data: jsonData
+                            })
                         });
 
                         const data = await response.json();
@@ -98,21 +110,41 @@ app.get('/', (req, res) => {
 // --- API ENDPOINT ---
 app.post('/generate-report-image', async (req, res) => {
     try {
-        const rawData = req.body;
+        const payload = req.body;
+        const rawData = Array.isArray(payload) ? payload : payload?.data;
+        const reportMode = payload?.reportMode || 'auto';
 
         if (!Array.isArray(rawData)) {
             throw new Error("Input must be an array of objects.");
         }
 
         const branchesSet = new Set();
-        const categoriesSet = new Set();
+        const dimensionsSet = new Set();
         let reportPeriod = "Sales Report";
         let reportType = "Sales";
+        let dimensionLabel = "Product Category";
+        let reportTarget = "Category";
         let executeTime = new Date().toLocaleString();
+
+        const isBrandData = rawData.some(item => item && item.product_brand_name);
+        const isCategoryData = rawData.some(item => item && item.product_category_name);
+        const useBrandReport = reportMode === 'brand' || (reportMode === 'auto' && isBrandData && !isCategoryData);
+
+        const dimensionKey = useBrandReport ? 'product_brand_name' : 'product_category_name';
+        const amountKey = useBrandReport
+            ? (rawData.some(item => item && item.monthly !== undefined) ? 'monthly' : 'daily')
+            : (rawData.some(item => item && item.monthly !== undefined) ? 'monthly' : 'saleamnt');
+        dimensionLabel = useBrandReport ? "Product Brand" : "Product Category";
+        reportTarget = useBrandReport ? "Brand" : "Category";
+
+        const parseAmount = (value) => {
+            const parsed = parseFloat(value);
+            return Number.isFinite(parsed) ? parsed : 0;
+        };
 
         rawData.forEach(item => {
             if (item.branch_name) branchesSet.add(item.branch_name);
-            if (item.product_category_name) categoriesSet.add(item.product_category_name);
+            if (item[dimensionKey]) dimensionsSet.add(item[dimensionKey]);
             if (item.dtype) {
                 reportPeriod = item.dtype;
                 const dtypePrefix = String(item.dtype).split(':')[0].trim().toLowerCase();
@@ -120,15 +152,18 @@ app.post('/generate-report-image', async (req, res) => {
                 if (dtypePrefix === 'monthly') reportType = 'Monthly';
             }
         });
+        if (rawData.some(item => item && item.monthly !== undefined)) {
+            reportType = 'Monthly';
+        }
 
         const sortedBranches = Array.from(branchesSet).sort();
-        const sortedCategories = Array.from(categoriesSet).sort();
+        const sortedDimensions = Array.from(dimensionsSet).sort();
 
         // Data processing for Sale Amount (converted to Lakh)
-        const matrix = sortedCategories.map(cat => {
+        const matrix = sortedDimensions.map(dim => {
             return sortedBranches.map(br => {
-                const found = rawData.find(d => d.product_category_name === cat && d.branch_name === br);
-                return found ? (parseFloat(found.saleamnt) / 100000) : 0;
+                const found = rawData.find(d => d[dimensionKey] === dim && d.branch_name === br);
+                return found ? (parseAmount(found[amountKey]) / 100000) : 0;
             });
         });
 
@@ -142,6 +177,7 @@ app.post('/generate-report-image', async (req, res) => {
             }, 0);
             return totalBillSum;
         });
+        const hasInvoiceData = rawData.some(item => item && item.billno !== undefined && item.billno !== null);
 
         const cleanName = (name) => name.includes('-/-') ? name.split('-/-')[1] : name;
 
@@ -181,13 +217,13 @@ app.post('/generate-report-image', async (req, res) => {
                 <body>
                     <div class="mb-4">
                         <div class="header-text uppercase">PRO 1 GLOBAL COMPANY LIMITED</div>
-                        <div class="header-text">${reportType} Sales Report By Branch</div>
+                        <div class="header-text">${reportType} Sales Report By ${reportTarget}</div>
                         <div class="sub-header text-gray-600">Updated on ${executeTime}</div>
                     </div>
                     <table>
                         <thead>
                             <tr>
-                                <th rowspan="2" class="cat-header">Product Category</th>
+                                <th rowspan="2" class="cat-header">${dimensionLabel}</th>
                                 <th colspan="${sortedBranches.length + 1}" class="text-left px-2">${reportPeriod}</th>
                             </tr>
                             <tr>
@@ -196,12 +232,12 @@ app.post('/generate-report-image', async (req, res) => {
                             </tr>
                         </thead>
                         <tbody>
-                            ${sortedCategories.map((cat, i) => {
+                            ${sortedDimensions.map((dim, i) => {
                                 const row = matrix[i];
                                 const rowTotal = row.reduce((a, b) => a + b, 0);
                                 return `
                                     <tr>
-                                        <td class="cat-column">${cat}</td>
+                                        <td class="cat-column">${dim}</td>
                                         ${row.map(val => `<td class="branch-cell">${val.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`).join('')}
                                         <td class="total-branch-cell">${rowTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                                     </tr>
@@ -217,27 +253,29 @@ app.post('/generate-report-image', async (req, res) => {
                                 }).join('')}
                                 <td>${matrix.flat().reduce((a, b) => a + b, 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                             </tr>
-                            <tr class="invoice-row">
-                                <td class="cat-column invoice-label" style="text-align:center">No. of Invoice/Day</td>
-                                ${branchInvoices.map(inv => `<td class="branch-cell">${inv.toLocaleString()}</td>`).join('')}
-                                <td>${branchInvoices.reduce((a, b) => a + b, 0).toLocaleString()}</td>
-                            </tr>
-                            <tr class="avg-row">
-                                <td class="cat-column avg-label" style="text-align:center">Avg. Kyat/Invoice(Lakh)</td>
-                                ${sortedBranches.map((_, brIdx) => {
-                                    const colTotal = matrix.reduce((sum, row) => sum + row[brIdx], 0);
-                                    const invCount = branchInvoices[brIdx];
-                                    // formula: total lahks / no of invoice
-                                    const avg = invCount > 0 ? (colTotal / invCount) : 0;
-                                    return `<td class="branch-cell">${avg.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
-                                }).join('')}
-                                ${(() => {
-                                    const grandTotal = matrix.flat().reduce((a, b) => a + b, 0);
-                                    const totalInvoices = branchInvoices.reduce((a, b) => a + b, 0);
-                                    const grandAvg = totalInvoices > 0 ? (grandTotal / totalInvoices) : 0;
-                                    return `<td>${grandAvg.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
-                                })()}
-                            </tr>
+                            ${useBrandReport ? '' : `
+                                <tr class="invoice-row">
+                                    <td class="cat-column invoice-label" style="text-align:center">No. of Invoice/Day</td>
+                                    ${branchInvoices.map(inv => `<td class="branch-cell">${hasInvoiceData ? inv.toLocaleString() : '-'}</td>`).join('')}
+                                    <td>${hasInvoiceData ? branchInvoices.reduce((a, b) => a + b, 0).toLocaleString() : '-'}</td>
+                                </tr>
+                                <tr class="avg-row">
+                                    <td class="cat-column avg-label" style="text-align:center">Avg. Kyat/Invoice(Lakh)</td>
+                                    ${sortedBranches.map((_, brIdx) => {
+                                        const colTotal = matrix.reduce((sum, row) => sum + row[brIdx], 0);
+                                        const invCount = branchInvoices[brIdx];
+                                        // formula: total lahks / no of invoice
+                                        const avg = invCount > 0 ? (colTotal / invCount) : 0;
+                                        return `<td class="branch-cell">${hasInvoiceData ? avg.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td>`;
+                                    }).join('')}
+                                    ${(() => {
+                                        const grandTotal = matrix.flat().reduce((a, b) => a + b, 0);
+                                        const totalInvoices = branchInvoices.reduce((a, b) => a + b, 0);
+                                        const grandAvg = totalInvoices > 0 ? (grandTotal / totalInvoices) : 0;
+                                        return `<td>${hasInvoiceData ? grandAvg.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '-'}</td>`;
+                                    })()}
+                                </tr>
+                            `}
                         </tfoot>
                     </table>
                 </body>
