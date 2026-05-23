@@ -255,12 +255,12 @@ app.post('/generate-report-image', async (req, res) => {
                             </tr>
                             ${useBrandReport ? '' : `
                                 <tr class="invoice-row">
-                                    <td class="cat-column invoice-label" style="text-align:center">No. of Invoice/Day</td>
+                                    <td class="cat-column invoice-label" style="text-align:center">No. of (Product) Invoice/Day</td>
                                     ${branchInvoices.map(inv => `<td class="branch-cell">${hasInvoiceData ? inv.toLocaleString() : '-'}</td>`).join('')}
                                     <td>${hasInvoiceData ? branchInvoices.reduce((a, b) => a + b, 0).toLocaleString() : '-'}</td>
                                 </tr>
                                 <tr class="avg-row">
-                                    <td class="cat-column avg-label" style="text-align:center">Avg. Kyat/Invoice(Lakh)</td>
+                                    <td class="cat-column avg-label" style="text-align:center">Avg.Kyat/Product Invoice(Lakh)</td>
                                     ${sortedBranches.map((_, brIdx) => {
                                         const colTotal = matrix.reduce((sum, row) => sum + row[brIdx], 0);
                                         const invCount = branchInvoices[brIdx];
